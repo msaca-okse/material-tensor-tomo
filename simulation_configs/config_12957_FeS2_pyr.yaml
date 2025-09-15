@@ -1,0 +1,34 @@
+# Path where simulation results will be saved
+absolute_path: "/dtu-compute/msaca/simulated_data/diffraction"
+session_name: "reference_12957_FeS2_pyr"
+
+# Mesh configuration
+mesh_type: "cylinder"   # could be: cylinder, cube, custom
+mesh_parameters:
+  number_of_elements: 1  # alternative if mesh_density not given
+  sample_height: 0.5   # cylinder height
+  sample_radius: 3.0    # cylinder radius
+
+# Materials (list of CIF files)
+materials:
+  parent_folder: "/dtu-compute/msaca/sliceA_diffraction/cif-files_and_theoretical_pd_spectra/cif"
+  files:
+    - 12957_FeS2_pyr.cif
+
+# Probability (0–100) that an element is powder instead of a perfect crystal
+powder_percentage: 100
+
+# Experiment setup parameters
+experiment:
+  wavelength: 0.4        # Ångström
+  pixel_size: 150.         # mm or your unit
+  number_of_detector_pixels: 512     # number of pixels (square detector assumed)
+  detector_distance: 150000  # distance in mm
+  beam_width: 0.005         # mm
+  number_of_angles: 1           # number of rotation angles
+  number_of_translations: 2
+  translation_distance: 0.1
+  polarization: false
+  lorentz: false
+
+crystal_quantile: 100.0

@@ -6,10 +6,10 @@ from numpy.typing import NDArray
 from scipy.special import sph_harm
 
 
-from base_basis_set import BasisSet
-from probed_coordinates import ProbedCoordinates
-from hashing import list_to_hash
-from tensor_operations import (framewise_contraction,framewise_contraction_transpose)
+from mumott.base_basis_set import BasisSet
+from mumott.probed_coordinates import ProbedCoordinates
+from mumott.hashing import list_to_hash
+from mumott.tensor_operations import (framewise_contraction,framewise_contraction_transpose)
 
 
 logger = logging.getLogger(__name__)

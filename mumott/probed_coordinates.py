@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from hashing import list_to_hash
+from mumott.hashing import list_to_hash
 import numpy as np
 
 

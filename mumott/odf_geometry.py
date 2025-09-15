@@ -3,11 +3,11 @@
 from dataclasses import dataclass
 import numpy as np
 from typing import Optional, Sequence
-from geometry import Geometry
+from mumott.geometry import Geometry
 from scipy.spatial.transform import Rotation as R
 
 # import your own classes
-from probed_coordinates import ProbedCoordinates
+from mumott.probed_coordinates import ProbedCoordinates
 
 @dataclass
 class ODFGeometry:

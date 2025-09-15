@@ -8,8 +8,8 @@ import codecs
 import numpy as np
 from typing import NamedTuple, Union
 from scipy.spatial.transform import Rotation
-from hashing import list_to_hash
-from probed_coordinates import ProbedCoordinates
+from mumott.hashing import list_to_hash
+from mumott.probed_coordinates import ProbedCoordinates
 from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)

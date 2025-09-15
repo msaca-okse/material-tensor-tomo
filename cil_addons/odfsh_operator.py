@@ -5,8 +5,8 @@ import numpy as np
 from cil.framework import ImageGeometry, ImageData
 from cil.optimisation.operators import LinearOperator
 
-from spherical_harmonics import SphericalHarmonics
-from odf_geometry import ODFGeometry
+from mumott.spherical_harmonics import SphericalHarmonics
+from mumott.odf_geometry import ODFGeometry
 
 
 class ODFSHOperator3d(LinearOperator):

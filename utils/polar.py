@@ -1,5 +1,6 @@
 import numpy as np
 import cupy as cp
+from tqdm import tqdm
 
 
 
@@ -228,9 +229,6 @@ def detector_radius_to_twotheta_cupy(det_array, two_theta_new, detector_distance
 
 
 
-
-import cupy as cp
-
 def cartesian_to_polar_cupy_batch(matrix, num_phi=360, num_rad=None, max_radius=None, factor=3):
     """
     Batched Cartesian → Polar for CuPy arrays.
@@ -330,8 +328,6 @@ def detector_radius_to_twotheta_cupy_batch(det_array, two_theta_new, detector_di
     return out   # shape (B, n_azimuth, n_new)
 
 
-import cupy as cp
-
 def process_diffraction_cupy(
     diffraction_4d_gpu, 
     num_phi, factor, 
@@ -371,10 +367,11 @@ def process_diffraction_cupy(
 
     # flatten (Nx,Ny) into batch dimension
     batch = diffraction_4d_gpu.reshape(B, H, W)
-
+    print(B)
     for start in range(0, B, chunk_size):
         end = min(start + chunk_size, B)
         chunk = batch[start:end]  # shape (b, H, W)
+        print(chunk.shape)
 
         # Cartesian -> Polar
         pol_chunk, max_rad = cartesian_to_polar_cupy_batch(
@@ -394,6 +391,71 @@ def process_diffraction_cupy(
             )
 
         out[start:end] = pol_reb_chunk
+
+    # reshape back to (Nx, Ny, num_phi, n_new)
+    out = out.reshape(Nx, Ny, out.shape[1], out.shape[2])
+    return out
+
+
+
+def process_diffraction_cpu_to_gpu(
+    diffraction_4d,        # numpy array, shape (Nx, Ny, H, W)
+    num_phi, factor,
+    two_theta_new, detector_distance, r_max,
+    chunk_size=32,         # number of (i,j) slices per chunk
+    return_to_cpu=True     # store results on CPU or GPU
+):
+    Nx, Ny, H, W = diffraction_4d.shape
+    B = Nx * Ny
+    two_theta_new_gpu = cp.asarray(two_theta_new)
+
+    # flatten (Nx,Ny) into batch dimension for easy chunking
+    flat = diffraction_4d.reshape(B, H, W)
+
+    # figure out output shape using one test slice
+    test_slice = diffraction_4d[0,0][None, :, :]   # (1, H, W)
+    test_pol, max_rad = cartesian_to_polar_cupy_batch(
+        cp.asarray(test_slice), num_phi=num_phi, factor=factor
+    )
+    test_reb = detector_radius_to_twotheta_cupy_batch(
+        test_pol, two_theta_new_gpu, detector_distance, r_max
+    )
+
+    # output shape in flattened form: (B, num_phi, n_new)
+    out_flat_shape = (B, test_reb.shape[1], test_reb.shape[2])
+
+    # allocate container
+    if return_to_cpu:
+        out = np.empty(out_flat_shape, dtype=test_reb.dtype)
+    else:
+        out = cp.empty(out_flat_shape, dtype=test_reb.dtype)
+
+    # loop over chunks
+    for start in tqdm(range(0, B, chunk_size), desc="Processing"):
+        end = min(start + chunk_size, B)
+
+        # move chunk to GPU
+        chunk_gpu = cp.asarray(flat[start:end])   # (b, H, W)
+
+        # cartesian -> polar
+        pol_chunk, _ = cartesian_to_polar_cupy_batch(
+            chunk_gpu, num_phi=num_phi, factor=factor
+        )
+
+        # radius -> 2θ
+        pol_reb_chunk = detector_radius_to_twotheta_cupy_batch(
+            pol_chunk, two_theta_new_gpu, detector_distance, r_max
+        )  # (b, num_phi, n_new)
+
+        # store results
+        if return_to_cpu:
+            out[start:end] = cp.asnumpy(pol_reb_chunk)
+        else:
+            out[start:end] = pol_reb_chunk
+
+        # free GPU memory
+        del chunk_gpu, pol_chunk, pol_reb_chunk
+        cp._default_memory_pool.free_all_blocks()
 
     # reshape back to (Nx, Ny, num_phi, n_new)
     out = out.reshape(Nx, Ny, out.shape[1], out.shape[2])

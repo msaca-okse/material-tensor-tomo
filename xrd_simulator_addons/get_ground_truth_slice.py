@@ -17,7 +17,7 @@ def get_ground_truth(config = "config.yaml"):
     session_name = config["session_name"]
     spatial_limit = config["experiment"]["translation_distance"]*config["experiment"]["number_of_translations"]/2
 
-    poly_path = os.path.join("samples", f"mesh_{session_name}")
+    poly_path = os.path.join("xrd_simulator_addons/samples", f"mesh_{session_name}")
     poly_path = poly_path + '.pc'
 
     polycrystal = Polycrystal.load(poly_path)

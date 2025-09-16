@@ -2,7 +2,7 @@
 from typing import Optional, Sequence
 import numpy as np
 
-from cil.framework import ImageGeometry, ImageData
+from cil.framework import ImageGeometry, ImageData, BlockDataContainer
 from cil.optimisation.operators import LinearOperator
 
 from mumott.spherical_harmonics import SphericalHarmonics
@@ -357,34 +357,40 @@ class ODFSHOperator2d_fast(LinearOperator):
 
     def direct(self, x: ImageData) -> ImageData:
         """
-        x: ImageData on ig_in with array shape (Nx, Ny, K)
-        returns ImageData on ig_out with array shape (Nx, Ny, M)
+        x: ImageData on ig_in with array shape (M_rot, Nx, Ny, K)
+        returns ImageData on ig_out with array shape (M_rot, Nx, Ny, M)
         """
-        xin = x.as_array()
-        K, Nx, Ny = np.shape(xin)
+        xin = [x[i].as_array() for i in range(len(x))]
+        xin = np.stack(xin, axis=0)
+
+        M_rot, K, Nx, Ny = np.shape(xin)
 
         if xin.dtype != self.dtype:
             xin = xin.astype(self.dtype, copy=False)
 
-        if tuple(xin.shape) != tuple(self.ig_in.shape):
+        if tuple(xin[0].shape) != tuple(self.ig_in.shape):
             raise ValueError(f"Input shape {xin.shape} != ig_in.shape {self.ig_in.shape}")
 
-        
-        x_sh_flat = xin.reshape(K, Nx*Ny).transpose([1,0])  # (Nx*Ny, K)
+        x_sh_flat = xin.reshape(M_rot, K, Nx*Ny).transpose([0,2,1])  # (M_rot, Nx*Ny, K)
 
         # Call SH forward: (Nx*Ny, K) -> (Nx*Ny, M)
-        y_sh_flat = self.sh.forward(x_sh_flat, indices=self.indices).astype(self.dtype, copy=False)
+        y_sh_flat = self.sh.forward(x_sh_flat, indices=self.indices).astype(self.dtype, copy=False)   # (M_rot, Nx*Ny, M)
 
-        y_out_arr = y_sh_flat.transpose([1,0]).reshape(self.M, Nx, Ny)  # (Nx, Ny, M)
+        y_out_arr = y_sh_flat.transpose([0,2,1]).reshape(M_rot, self.M, Nx, Ny)  # (M_rot, M, Nx, Ny)
 
-        if tuple(y_out_arr.shape) != tuple(self.ig_out.shape):
+        if tuple(y_out_arr[0].shape) != tuple(self.ig_out.shape):
             raise RuntimeError(
-                f"Computed output shape {y_out_arr.shape} doesn't match ig_out.shape {self.ig_out.shape}."
+                f"Computed output shape {y_out_arr[0].shape} doesn't match ig_out.shape {self.ig_out.shape}."
             )
 
-        out = self.ig_out.allocate(0, dtype=self.dtype)
-        out.fill(y_out_arr)
-        return out
+        data_list = []
+        for i in range(M_rot):
+            img = ImageData(y_out_arr[i], geometry=self.ig_out)   # ig_K must be your defined geometry
+            data_list.append(img)
+
+        # put into a BlockDataContainer
+        data_block = BlockDataContainer(*data_list)
+        return data_block
 
     def adjoint(self, y: ImageData):
         """

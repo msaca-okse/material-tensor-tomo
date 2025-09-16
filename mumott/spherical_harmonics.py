@@ -9,7 +9,7 @@ from scipy.special import sph_harm
 from mumott.base_basis_set import BasisSet
 from mumott.probed_coordinates import ProbedCoordinates
 from mumott.hashing import list_to_hash
-from mumott.tensor_operations import (framewise_contraction,framewise_contraction_transpose)
+from mumott.tensor_operations import (framewise_contraction,framewise_contraction_transpose, framewise_contraction_transpose_jit)
 
 
 logger = logging.getLogger(__name__)
@@ -152,23 +152,16 @@ class SphericalHarmonics(BasisSet):
         self._update()
         output = np.zeros(coefficients.shape[:-1] + (self._projection_matrix.shape[1],),
                           coefficients.dtype)
-        
+        print('output shape', output.shape)
 
         if indices is None:
             framewise_contraction_transpose(self._projection_matrix[0],
                                             coefficients,
                                             output)
             
-
-        elif indices.size == 1:
-            np.einsum('ijk, ...k -> ...j',
-                      self._projection_matrix[indices],
-                      coefficients,
-                      out=output,
-                      optimize='greedy',
-                      casting='unsafe')
         else:
-            framewise_contraction_transpose(self._projection_matrix[indices],
+            print('proj mat shape', self._projection_matrix[indices].shape)
+            framewise_contraction_transpose_jit(self._projection_matrix[indices],
                                             coefficients,
                                             output)
         return output

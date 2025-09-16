@@ -53,7 +53,7 @@ class ODFGeometry:
         geom.detector_angles = self.azimuthal_angles
         geom.two_theta = self.two_theta
         geom.full_circle_covered  = True   
-        Rz = [R.from_rotvec(np.array([0.,0.,1.]) * self.rotation).as_matrix()]
+        Rz = [R.from_rotvec(np.array([0.,0.,1.]) * self.rotation[i]).as_matrix() for i in range(len(self.rotation))]
         geom.rotations = Rz
 
         self.probed_coordinates = geom._get_probed_coordinates()

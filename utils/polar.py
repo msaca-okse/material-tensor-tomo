@@ -460,3 +460,54 @@ def process_diffraction_cpu_to_gpu(
     # reshape back to (Nx, Ny, num_phi, n_new)
     out = out.reshape(Nx, Ny, out.shape[1], out.shape[2])
     return out
+
+
+
+
+def spectra_radius_to_twotheta(
+    spec_list,
+    two_theta_new,
+    detector_distance,
+    r_max
+):
+    """
+    Interpolate multiple 1D spectra from radius -> 2θ space.
+
+    Parameters
+    ----------
+    spec_list : list of 1D ndarrays
+        Each element is shape (n_radius,), an azimuthally integrated spectrum.
+    two_theta_new : 1D ndarray
+        Target 2θ values in degrees. Must lie within detector range.
+    detector_distance : float
+        Sample-to-detector distance (same units as r_max).
+    r_max : float
+        Maximum detector radius (same units as detector_distance).
+
+    Returns
+    -------
+    out_array : ndarray, shape (len(spec_list), len(two_theta_new))
+        Rebinned spectra in (spectrum index × 2θ) space.
+    """
+    n_spectra = len(spec_list)
+    n_radius = len(spec_list[0])
+
+    # radius axis (0..r_max)
+    r = np.linspace(0, r_max, n_radius)
+
+    # convert radius -> 2θ (degrees)
+    two_theta = np.degrees(np.arctan(r / detector_distance))
+
+    # range check
+    if (two_theta_new.min() < two_theta.min()) or (two_theta_new.max() > two_theta.max()):
+        raise ValueError(
+            f"Requested 2θ range {two_theta_new.min()}–{two_theta_new.max()} deg "
+            f"outside detector range {two_theta.min()}–{two_theta.max()} deg."
+        )
+
+    # interpolate each spectrum
+    out = np.empty((n_spectra, len(two_theta_new)), dtype=spec_list[0].dtype)
+    for i, s in enumerate(spec_list):
+        out[i, :] = np.interp(two_theta_new, two_theta, s)
+
+    return out

@@ -10,7 +10,7 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 def get_ground_truth(config = "config.yaml"):
 
 
-    with open(config, "r") as f:
+    with open(config, "r",encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
 

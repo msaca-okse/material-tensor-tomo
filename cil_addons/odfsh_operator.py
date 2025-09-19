@@ -1,11 +1,13 @@
 # odf_sh_image_operator.py
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
+from numpy.typing import NDArray
 import numpy as np
 
-from cil.framework import ImageGeometry, ImageData, BlockDataContainer
+from cil.framework import ImageGeometry, ImageData, BlockDataContainer, AcquisitionGeometry, AcquisitionData
 from cil.optimisation.operators import LinearOperator
 
 from mumott.spherical_harmonics import SphericalHarmonics
+from mumott.gaussian_kernels import GaussianKernels
 from mumott.odf_geometry import ODFGeometry
 
 
@@ -344,11 +346,12 @@ class ODFSHOperator2d_fast(LinearOperator):
         )
 
         # Shapes from SH projection matrix
-        N_sh, M_sh, K_sh = map(int, self.sh.projection_matrix.shape)
-        self.N, self.M, self.K = N_sh, M_sh, K_sh
+        N_rot_sh, K_sh, M_sh = map(int, self.sh.projection_matrix.shape)
+        self.N_rot, self.M, self.K = N_rot_sh, M_sh, K_sh
+        
 
         # Validate geometry compatibility
-        self._validate_geometries()
+        #self._validate_geometries()
 
         # Initialise LinearOperator with geometries
         super().__init__(domain_geometry=self.ig_in, range_geometry=self.ig_out)
@@ -360,8 +363,16 @@ class ODFSHOperator2d_fast(LinearOperator):
         x: ImageData on ig_in with array shape (M_rot, Nx, Ny, K)
         returns ImageData on ig_out with array shape (M_rot, Nx, Ny, M)
         """
-        xin = [x[i].as_array() for i in range(len(x))]
-        xin = np.stack(xin, axis=0)
+        if isinstance(x, ImageData):
+            xin = [x.as_array()]
+            xin = np.stack(xin, axis=0)
+        elif isinstance(x, BlockDataContainer):
+            xin = [x[i].as_array() for i in range(len(x))]
+            xin = np.stack(xin, axis=0)
+        else:
+            return f"Unknown type: {type(x)}"
+
+
 
         M_rot, K, Nx, Ny = np.shape(xin)
 
@@ -371,26 +382,29 @@ class ODFSHOperator2d_fast(LinearOperator):
         if tuple(xin[0].shape) != tuple(self.ig_in.shape):
             raise ValueError(f"Input shape {xin.shape} != ig_in.shape {self.ig_in.shape}")
 
-        x_sh_flat = xin.reshape(M_rot, K, Nx*Ny).transpose([0,2,1])  # (M_rot, Nx*Ny, K)
+        x_sh_flat = np.ascontiguousarray(xin.reshape(M_rot, K, Nx*Ny).transpose([0,2,1]))  # (M_rot, Nx*Ny, K)
 
         # Call SH forward: (Nx*Ny, K) -> (Nx*Ny, M)
         y_sh_flat = self.sh.forward(x_sh_flat, indices=self.indices).astype(self.dtype, copy=False)   # (M_rot, Nx*Ny, M)
-
-        y_out_arr = y_sh_flat.transpose([0,2,1]).reshape(M_rot, self.M, Nx, Ny)  # (M_rot, M, Nx, Ny)
-
+        y_out_arr = np.ascontiguousarray(y_sh_flat.transpose([0,2,1]).reshape(M_rot, self.M, Nx, Ny))  # (M_rot, M, Nx, Ny)
         if tuple(y_out_arr[0].shape) != tuple(self.ig_out.shape):
             raise RuntimeError(
                 f"Computed output shape {y_out_arr[0].shape} doesn't match ig_out.shape {self.ig_out.shape}."
             )
 
-        data_list = []
-        for i in range(M_rot):
-            img = ImageData(y_out_arr[i], geometry=self.ig_out)   # ig_K must be your defined geometry
-            data_list.append(img)
+
+        if isinstance(x, ImageData):
+            return ImageData(y_out_arr[0], geometry=self.ig_out)
+        elif isinstance(x, BlockDataContainer):
+            data_list = []
+            for i in range(M_rot):
+                img = ImageData(y_out_arr[i], geometry=self.ig_out)   # ig_K must be your defined geometry
+                data_list.append(img)
 
         # put into a BlockDataContainer
         data_block = BlockDataContainer(*data_list)
         return data_block
+        
 
     def adjoint(self, y: ImageData):
         """
@@ -422,6 +436,275 @@ class ODFSHOperator2d_fast(LinearOperator):
         out.fill(x_out_arr)
         return out
     
+
+    def _validate_geometries(self):
+        # ig_in: (Nx, Ny, K)
+        if self.ig_in.shape[0] != self.K:
+            raise ValueError(f"ig_in.shape[-1]={self.ig_in.shape[-1]} must equal K={self.K}")
+
+        # ig_out: (Nx, Ny, M)
+        if self.ig_out.shape[0] != self.M:
+            raise ValueError(f"ig_out.shape[-1]={self.ig_out.shape[-1]} must equal M={self.M}")
+
+        if self.ig_in.shape[1:] != self.ig_out.shape[1:]:
+            raise ValueError(f"Spatial (x,y) mismatch: ig_in {self.ig_in.shape[1:]} vs ig_out {self.ig_out.shape[1:]}")
+
+
+
+
+
+class ODFGKOperator2d_fast_ag(LinearOperator):
+    """
+    B: coefficients -> ODF-detector values
+
+    Domain  (ig_in):  ImageGeometry with shape (Nx, Ny, K)
+                      z=K (SH coeffs)
+    Range   (ig_out): ImageGeometry with shape (Nx, Ny, M)
+                      z=M (detector segments)
+
+    Notes
+    -----
+    - Only `direct()` is implemented (and returns ImageData).
+    - `adjoint()` is left as a skeleton (raises NotImplementedError).
+    - The operator treats the z-dimension as if it were the channel axis.
+    """
+
+    def __init__(
+        self,
+        odf_geometry: ODFGeometry,
+        ag_in: AcquisitionGeometry,
+        ag_out: AcquisitionGeometry,
+        indices: Optional[Sequence[int]] = None,
+        dtype=np.float32,
+        **sh_kwargs
+    ):
+        self.geom    = odf_geometry
+        self.ag_in   = ag_in
+        self.ag_out  = ag_out
+        self.indices = None if indices is None else np.asarray(indices, dtype=int)
+        self.dtype   = dtype
+
+        # Build SH on the probed directions
+        self.geom.build_probed_coordinates()
+        pc = self.geom.probed_coordinates
+
+        self.gk = GaussianKernels(
+            probed_coordinates=pc,
+            grid_scale=self.geom.grid_scale,
+            kernel_scale_parameter=self.geom.kernel_scale_parameter,
+            enforce_friedel_symmetry=self.geom.enforce_friedel_symmetry,
+            **sh_kwargs
+        )
+
+        # Shapes from GK projection matrix
+        N_rot_gk, K_gk, M_gk = map(int, self.gk.projection_matrix.shape)
+        self.N_rot, self.M, self.K = N_rot_gk, M_gk, K_gk
+        
+
+        # Validate geometry compatibility
+        #self._validate_geometries()
+
+        # Initialise LinearOperator with geometries
+        super().__init__(domain_geometry=self.ag_in, range_geometry=self.ag_out)
+
+    # ------------ LinearOperator API ------------
+
+    def direct(self, x: ImageData) -> ImageData:
+        """
+        x: AcquisitionData on ag_in with array shape (K, M_rot, Mx)
+        returns AcquisitionData on ag_out with array shape (M_rot, Mx, M)
+        """
+        if isinstance(x, AcquisitionData):
+            xin = x.as_array()
+        else:
+            return f"Unknown type: {type(x)}"
+
+
+        if xin.dtype != self.dtype:
+            xin = xin.astype(self.dtype, copy=False)
+
+        if tuple(xin.shape) != tuple(self.ag_in.shape):
+            raise ValueError(f"Input shape {xin.shape} != ag_in.shape {self.ag_in.shape}")
+
+        xin_t = np.ascontiguousarray(xin.transpose([1,2,0]))  # from (K, M_rot, Mx) to (M_rot, Mx, K)  
+
+        # Call gk forward: (M_rot, Mx, K) -> (M_rot, Mx, M)
+        yin_t = self.gk.forward(xin_t, indices=self.indices).astype(self.dtype, copy=False)   # (M_rot, Mx, M)
+
+
+        if tuple(yin_t.shape) != tuple(self.ag_out.shape):
+            raise RuntimeError(
+                f"Computed output shape {yin_t.shape} doesn't match ag_out.shape {self.ag_out.shape}."
+            )
+
+
+        return AcquisitionData(yin_t, geometry=self.ag_out)
+
+
+        
+
+    def adjoint(self, y: ImageData):
+        """
+        y: AcquisitionData on ag_out with array shape (M_rot, Mx, M)
+        returns AcquisitionData on ag_in with array shape (K, M_rot, Mx)
+        """
+        if isinstance(y, AcquisitionData):
+            yin = y.as_array()
+        else:
+            return f"Unknown type: {type(y)}"
+        
+        if yin.dtype != self.dtype:
+            yin = yin.astype(self.dtype, copy=False)
+
+        if tuple(yin.shape) != tuple(self.ag_out.shape):
+            raise ValueError(f"Input shape {yin.shape} != ag_out.shape {self.ag_out.shape}")
+        
+        xin = self.gk.adjoint(yin, indices=self.indices).astype(self.dtype, copy=False)
+        xin_t = np.ascontiguousarray(xin.transpose([2,0,1]))  # from (K, M_rot, Mx) to (M_rot, Mx, K)
+        if tuple(xin_t.shape) != tuple(self.ag_in.shape):
+            raise RuntimeError(
+                f"Computed output shape {xin_t.shape} doesn't match ag_in.shape {self.ag_in.shape}."
+            )
+        return AcquisitionData(xin_t, geometry=self.ag_in)
+
+
+    
+
+
+    def _validate_geometries(self):
+        # ig_in: (Nx, Ny, K)
+        if self.ig_in.shape[0] != self.K:
+            raise ValueError(f"ig_in.shape[-1]={self.ig_in.shape[-1]} must equal K={self.K}")
+
+        # ig_out: (Nx, Ny, M)
+        if self.ig_out.shape[0] != self.M:
+            raise ValueError(f"ig_out.shape[-1]={self.ig_out.shape[-1]} must equal M={self.M}")
+
+        if self.ig_in.shape[1:] != self.ig_out.shape[1:]:
+            raise ValueError(f"Spatial (x,y) mismatch: ig_in {self.ig_in.shape[1:]} vs ig_out {self.ig_out.shape[1:]}")
+
+
+
+
+
+
+
+class ODFSHOperator2d_fast_ag(LinearOperator):
+    """
+    B: coefficients -> ODF-detector values
+
+    Domain  (ig_in):  ImageGeometry with shape (Nx, Ny, K)
+                      z=K (SH coeffs)
+    Range   (ig_out): ImageGeometry with shape (Nx, Ny, M)
+                      z=M (detector segments)
+
+    Notes
+    -----
+    - Only `direct()` is implemented (and returns ImageData).
+    - `adjoint()` is left as a skeleton (raises NotImplementedError).
+    - The operator treats the z-dimension as if it were the channel axis.
+    """
+
+    def __init__(
+        self,
+        odf_geometry: ODFGeometry,
+        ag_in: AcquisitionGeometry,
+        ag_out: AcquisitionGeometry,
+        indices: Optional[Sequence[int]] = None,
+        dtype=np.float32,
+        **sh_kwargs
+    ):
+        self.geom    = odf_geometry
+        self.ag_in   = ag_in
+        self.ag_out  = ag_out
+        self.indices = None if indices is None else np.asarray(indices, dtype=int)
+        self.dtype   = dtype
+
+        # Build SH on the probed directions
+        self.geom.build_probed_coordinates()
+        pc = self.geom.probed_coordinates
+
+        self.sh = SphericalHarmonics(
+            probed_coordinates=pc,
+            ell_max=self.geom.ell_max,
+            enforce_friedel_symmetry=self.geom.enforce_friedel_symmetry,
+            **sh_kwargs
+        )
+
+        # Shapes from SH projection matrix
+        N_rot_sh, K_sh, M_sh = map(int, self.sh.projection_matrix.shape)
+        self.N_rot, self.M, self.K = N_rot_sh, M_sh, K_sh
+        
+
+        # Validate geometry compatibility
+        #self._validate_geometries()
+
+        # Initialise LinearOperator with geometries
+        super().__init__(domain_geometry=self.ag_in, range_geometry=self.ag_out)
+
+    # ------------ LinearOperator API ------------
+
+    def direct(self, x: ImageData) -> ImageData:
+        """
+        x: AcquisitionData on ag_in with array shape (K, M_rot, Mx)
+        returns AcquisitionData on ag_out with array shape (M_rot, Mx, M)
+        """
+        if isinstance(x, AcquisitionData):
+            xin = x.as_array()
+        else:
+            return f"Unknown type: {type(x)}"
+
+
+        if xin.dtype != self.dtype:
+            xin = xin.astype(self.dtype, copy=False)
+
+        if tuple(xin.shape) != tuple(self.ag_in.shape):
+            raise ValueError(f"Input shape {xin.shape} != ag_in.shape {self.ag_in.shape}")
+
+        xin_t = np.ascontiguousarray(xin.transpose([1,2,0]))  # from (K, M_rot, Mx) to (M_rot, Mx, K)  
+
+        # Call SH forward: (M_rot, Mx, K) -> (M_rot, Mx, M)
+        yin_t = self.sh.forward(xin_t, indices=self.indices).astype(self.dtype, copy=False)   # (M_rot, Mx, M)
+
+
+        if tuple(yin_t.shape) != tuple(self.ag_out.shape):
+            raise RuntimeError(
+                f"Computed output shape {yin_t.shape} doesn't match ag_out.shape {self.ag_out.shape}."
+            )
+
+
+        return AcquisitionData(yin_t, geometry=self.ag_out)
+
+
+        
+
+    def adjoint(self, y: ImageData):
+        """
+        y: AcquisitionData on ag_out with array shape (M_rot, Mx, M)
+        returns AcquisitionData on ag_in with array shape (K, M_rot, Mx)
+        """
+        if isinstance(y, AcquisitionData):
+            yin = y.as_array()
+        else:
+            return f"Unknown type: {type(y)}"
+        
+        if yin.dtype != self.dtype:
+            yin = yin.astype(self.dtype, copy=False)
+
+        if tuple(yin.shape) != tuple(self.ag_out.shape):
+            raise ValueError(f"Input shape {yin.shape} != ag_out.shape {self.ag_out.shape}")
+        
+        xin = self.sh.adjoint(yin, indices=self.indices).astype(self.dtype, copy=False)
+        xin_t = np.ascontiguousarray(xin.transpose([2,0,1]))  # from (K, M_rot, Mx) to (M_rot, Mx, K)
+        if tuple(xin_t.shape) != tuple(self.ag_in.shape):
+            raise RuntimeError(
+                f"Computed output shape {xin_t.shape} doesn't match ag_in.shape {self.ag_in.shape}."
+            )
+        return AcquisitionData(xin_t, geometry=self.ag_in)
+
+
+    
+
 
     def _validate_geometries(self):
         # ig_in: (Nx, Ny, K)

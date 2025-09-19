@@ -9,7 +9,8 @@ from scipy.special import sph_harm
 from mumott.base_basis_set import BasisSet
 from mumott.probed_coordinates import ProbedCoordinates
 from mumott.hashing import list_to_hash
-from mumott.tensor_operations import (framewise_contraction,framewise_contraction_transpose, framewise_contraction_transpose_jit)
+from mumott.tensor_operations import (framewise_contraction_transpose_jit, framewise_contraction_jit)
+from multiprocessing import Pool
 
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class SphericalHarmonics(BasisSet):
         # Compute initial values for indices and matrix.
         self._enforce_friedel_symmetry = enforce_friedel_symmetry
         self._calculate_coefficient_indices()
-        self._projection_matrix = self._get_integrated_projection_matrix()
+        self._projection_matrix = np.ascontiguousarray(self._get_integrated_projection_matrix().transpose([0,2,1]))
 
     def _calculate_coefficient_indices(self) -> None:
         """
@@ -113,6 +114,8 @@ class SphericalHarmonics(BasisSet):
             (self._emm_indices >= 0)[np.newaxis, np.newaxis, np.newaxis, ...] * complex_factors.real +
             (self._emm_indices < 0)[np.newaxis, np.newaxis, np.newaxis, ...] * complex_factors.imag)
         return matrix
+    
+
 
     def forward(self,
                 coefficients: NDArray,
@@ -150,21 +153,18 @@ class SphericalHarmonics(BasisSet):
         """
         assert coefficients.shape[-1] == self._ell_indices.size
         self._update()
-        output = np.zeros(coefficients.shape[:-1] + (self._projection_matrix.shape[1],),
+        output = np.zeros(coefficients.shape[:-1] + (self._projection_matrix.shape[2],),
                           coefficients.dtype)
-        print('output shape', output.shape)
 
         if indices is None:
-            framewise_contraction_transpose(self._projection_matrix[0],
-                                            coefficients,
-                                            output)
+            NotImplementedError
             
         else:
-            print('proj mat shape', self._projection_matrix[indices].shape)
             framewise_contraction_transpose_jit(self._projection_matrix[indices],
-                                            coefficients,
-                                            output)
-        return output
+                                coefficients,
+                                output)
+            return output
+
     
     def adjoint(self,
                 data: NDArray,
@@ -201,16 +201,17 @@ class SphericalHarmonics(BasisSet):
         :meth:`gradient`.
         """
         self._update()
-        output = np.zeros(data.shape[:-1] + (self._projection_matrix.T.shape[0],),
+        output = np.zeros(data.shape[:-1] + (self._projection_matrix.T.shape[1],),
                         data.dtype)
         
-
         if indices is None:
-            framewise_contraction(self._projection_matrix[0],
-                                            data,
-                                            output)
-            
-        return output
+            NotImplementedError
+
+        else:
+            framewise_contraction_jit(self._projection_matrix[indices],
+                                data,
+                                output)
+            return output
 
     def gradient(self,
                  coefficients: NDArray,
@@ -772,3 +773,4 @@ class SphericalHarmonics(BasisSet):
         s += ['</tbody>']
         s += ['</table>']
         return '\n'.join(s)
+    

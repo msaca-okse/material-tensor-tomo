@@ -133,7 +133,7 @@ def detector_radius_to_twotheta(
     det_array : ndarray, shape (n_azimuth, n_radius)
         Input array, axis=0 azimuth, axis=1 radius.
     two_theta_new : 1D ndarray
-        Target 2θ values in degrees. Must lie within detector range.
+        Target 2θ values in radianss. Must lie within detector range.
     detector_distance : float
         Sample-to-detector distance (same units as r_max).
     r_max : float
@@ -149,8 +149,8 @@ def detector_radius_to_twotheta(
     # radius axis (0..r_max)
     r = np.linspace(0, r_max, n_radius)
 
-    # convert radius -> 2θ (degrees)
-    two_theta = np.degrees(np.arctan(r / detector_distance))
+    # convert radius -> 2θ (radianss)
+    two_theta = (np.arctan(r / detector_distance))
 
     # range check
     if (two_theta_new.min() < two_theta.min()) or (two_theta_new.max() > two_theta.max()):
@@ -186,8 +186,8 @@ def detector_radius_to_twotheta(
 #     # radius axis
 #     r = cp.linspace(0, r_max, n_radius)
 
-#     # convert radius -> 2θ (degrees)
-#     two_theta = cp.degrees(cp.arctan(r / detector_distance))
+#     # convert radius -> 2θ (radianss)
+#     two_theta = (cp.arctan(r / detector_distance))
 
 #     # range check (cast to float to avoid cp.bool_ -> error)
 #     if (float(two_theta_new.min()) < float(two_theta.min())) or \
@@ -207,7 +207,7 @@ def detector_radius_to_twotheta_cupy(det_array, two_theta_new, detector_distance
     two_theta_new = cp.asarray(two_theta_new)
 
     r = cp.linspace(0, r_max, n_radius)
-    two_theta = cp.degrees(cp.arctan(r / detector_distance))
+    two_theta = (cp.arctan(r / detector_distance))
 
     # indices of bins
     idx = cp.searchsorted(two_theta, two_theta_new, side="left")
@@ -313,7 +313,7 @@ def detector_radius_to_twotheta_cupy_batch(det_array, two_theta_new, detector_di
     two_theta_new = cp.asarray(two_theta_new)
 
     r = cp.linspace(0, r_max, n_radius)
-    two_theta = cp.degrees(cp.arctan(r / detector_distance))
+    two_theta = (cp.arctan(r / detector_distance))
 
     idx = cp.searchsorted(two_theta, two_theta_new, side="left")
     idx = cp.clip(idx, 1, n_radius-1)
@@ -346,7 +346,7 @@ def process_diffraction_cupy(
     factor : int
         Oversampling factor for antialiasing in polar conversion.
     two_theta_new : 1D array-like
-        Target 2θ values in degrees.
+        Target 2θ values in radianss.
     detector_distance : float
         Sample-to-detector distance.
     r_max : float
@@ -478,7 +478,7 @@ def spectra_radius_to_twotheta(
     spec_list : list of 1D ndarrays
         Each element is shape (n_radius,), an azimuthally integrated spectrum.
     two_theta_new : 1D ndarray
-        Target 2θ values in degrees. Must lie within detector range.
+        Target 2θ values in radianss. Must lie within detector range.
     detector_distance : float
         Sample-to-detector distance (same units as r_max).
     r_max : float
@@ -495,8 +495,8 @@ def spectra_radius_to_twotheta(
     # radius axis (0..r_max)
     r = np.linspace(0, r_max, n_radius)
 
-    # convert radius -> 2θ (degrees)
-    two_theta = np.degrees(np.arctan(r / detector_distance))
+    # convert radius -> 2θ (radianss)
+    two_theta = (np.arctan(r / detector_distance))
 
     # range check
     if (two_theta_new.min() < two_theta.min()) or (two_theta_new.max() > two_theta.max()):

@@ -1,0 +1,8 @@
+I have noget worked out the requitrements yet. This is a start version. Install cil:
+
+conda create --name cil -c https://software.repos.intel.com/python/conda -c conda-forge -c ccpi cil=25.0.0
+
+Install this cuda toolkit, as it works with numba
+
+conda install nvidia/label/cuda-12.4.1::cuda-toolkit
+
